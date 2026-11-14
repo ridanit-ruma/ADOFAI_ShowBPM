@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using HarmonyLib;
-using System.Reflection;
 using UnityModManagerNet;
 using UnityEngine;
-using GDMiniJSON;
 
 
 namespace ShowBPM
@@ -219,7 +217,7 @@ namespace ShowBPM
         private static void Start(UnityModManager.ModEntry modEntry)
         {
             harmony = new Harmony(modEntry.Info.Id);
-            harmony.PatchAll(Assembly.GetExecutingAssembly());
+            Patch.Apply(harmony);
 
         }
 
