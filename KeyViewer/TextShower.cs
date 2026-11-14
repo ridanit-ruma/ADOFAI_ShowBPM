@@ -1,7 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using DG.Tweening;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -54,7 +53,15 @@ namespace ShowBPM
 			textObject.transform.SetParent(TextObject.transform);
 
 			text = textObject.AddComponent<Text>();
-			text.font = RDString.GetFontDataForLanguage(RDString.language).font;
+			try
+			{
+				text.font = Game.GetFont(Game.Language);
+			}
+			catch (System.Exception e)
+			{
+				Main.Logger.LogException(e);
+				text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+			}
 			text.alignment = toAlign(Main.setting.align);
 			text.fontSize = Main.setting.size;
 			text.color = Color.white;

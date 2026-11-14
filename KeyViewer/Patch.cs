@@ -1,8 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Net.NetworkInformation;
+using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using HarmonyLib;
 using UnityEngine;
 
@@ -13,129 +12,139 @@ namespace ShowBPM
         private static float bpm = 0, pitch = 0, playbackSpeed = 1;
         private static bool first = true, beforedt = false;
         private static double beforebpm = 0;
+        private static readonly HashSet<string> reported = new HashSet<string>();
 
-        [HarmonyPatch(typeof(scrCalibrationPlanet),"Start")]
-        internal static class scrCalibrationPlanet_Start
+        /// <summary>
+        /// Applies every patch on its own, so a type or method that this game
+        /// version does not have only disables the patch that needs it.
+        /// </summary>
+        internal static void Apply(Harmony harmony)
         {
-            private static void Postfix()
-            {
-                if (!Main.IsEnabled) return;
-                Main.gui.TextObject.SetActive(false);
-            }
-        }
-        
-
-
-        [HarmonyPatch(typeof(scrUIController), "WipeToBlack")]
-        internal static class scrUIController_WipeToBlack_Patch
-        {
-            private static void Postfix()
-            {
-                if (!Main.IsEnabled) return;
-                Main.gui.TextObject.SetActive(false);
-            }
+            Add(harmony, "scrCalibrationPlanet", "Start", postfix: nameof(HideText));
+            Add(harmony, "scrUIController", "WipeToBlack", postfix: nameof(HideText));
+            Add(harmony, "scnEditor", "ResetScene", postfix: nameof(HideText));
+            Add(harmony, "scrController", "StartLoadingScene", postfix: nameof(HideText));
+            Add(harmony, "scrController", "Awake", prefix: nameof(ControllerAwake));
+            Add(harmony, "scnGame", "Play", postfix: nameof(LevelStarted));
+            Add(harmony, "scrPressToStart", "ShowText", postfix: nameof(LevelStarted));
+            Add(harmony, "scrPlanet", "MoveToNextFloor", postfix: nameof(MoveToNextFloor));
+            Add(harmony, "RDString", "ChangeLanguage", prefix: nameof(ChangeLanguage));
         }
 
-        [HarmonyPatch(typeof(scnEditor), "ResetScene")]
-        internal static class scnEditor_ResetScene_Patch
+        private static void Add(Harmony harmony, string typeName, string methodName, string prefix = null,
+            string postfix = null)
         {
-            private static void Postfix()
+            try
             {
-                if (!Main.IsEnabled) return;
-                Main.gui.TextObject.SetActive(false);
-            }
-        }
+                Type type = Game.FindType(typeName);
+                List<MethodInfo> targets = type == null ? new List<MethodInfo>() : Game.FindMethods(type, methodName);
+                if (targets.Count == 0)
+                {
+                    Main.Logger.Log($"Skipped patch for {typeName}.{methodName}: not found in this game version.");
+                    return;
+                }
 
-        [HarmonyPatch(typeof(scrController), "StartLoadingScene")]
-        internal static class scrController_StartLoadingScene_Patch
-        {
-            private static void Postfix()
-            {
-                if (!Main.IsEnabled) return;
-                Main.gui.TextObject.SetActive(false);
+                foreach (MethodInfo target in targets)
+                {
+                    harmony.Patch(target,
+                        prefix == null ? null : new HarmonyMethod(typeof(Patch), prefix),
+                        postfix == null ? null : new HarmonyMethod(typeof(Patch), postfix));
+                }
             }
-        }
-
-        [HarmonyPatch(typeof(scrController), "Awake")]
-        internal static class scrControllerAwake
-        {
-            public static void Prefix()
+            catch (Exception e)
             {
-                if (!Main.IsEnabled) return;
-                Main.language = Main.languages.ContainsKey(RDString.language.ToString()) ? Main.languages[RDString.language.ToString()] : Main.languages["English"];
+                Main.Logger.Error($"Failed to patch {typeName}.{methodName}.");
+                Main.Logger.LogException(e);
             }
         }
 
-        [HarmonyPatch(typeof(scnGame), "Play")]
-        internal static class CustomLevelStart
+        // Logs each distinct failure once instead of on every tile.
+        private static void Report(Exception e)
         {
-            private static void Postfix(scnGame __instance)
+            if (e is TargetInvocationException && e.InnerException != null) e = e.InnerException;
+            if (!reported.Add(e.GetType().Name + e.Message)) return;
+            Main.Logger.LogException(e);
+        }
+
+        // Unity objects compare equal to null once destroyed, which a plain object comparison misses.
+        private static bool IsNull(object obj)
+        {
+            if (obj is UnityEngine.Object unityObject) return unityObject == null;
+            return obj == null;
+        }
+
+        private static void HideText()
+        {
+            if (!Main.IsEnabled) return;
+            Main.gui.TextObject.SetActive(false);
+        }
+
+        private static void ControllerAwake()
+        {
+            try
             {
+                if (first)
+                {
+                    first = false;
+                    Main.gui.text.font = Game.GetFont(Game.Language);
+                }
+
                 if (!Main.IsEnabled) return;
-                if (!ADOBase.controller.gameworld) return;
-                //if (ADOBase.customLevel == null) return;
-                
-                LevelStart(ADOBase.controller);
+                SetLanguage(Game.Language);
+            }
+            catch (Exception e)
+            {
+                Report(e);
             }
         }
 
-
-        [HarmonyPatch(typeof(scrPressToStart), "ShowText")]
-        internal static class BossLevelStart
+        private static void LevelStarted()
         {
-            private static void Postfix(scrPressToStart __instance)
+            try
             {
                 if (!Main.IsEnabled) return;
-                if (!ADOBase.controller.gameworld) return;
-                //if (ADOBase.customLevel == null) return;
+                if (!Game.Gameworld) return;
 
-                LevelStart(ADOBase.controller);
+                LevelStart();
             }
-
+            catch (Exception e)
+            {
+                Report(e);
+            }
         }
 
-        [HarmonyPatch(typeof(scrPlanet), "MoveToNextFloor")]
-        internal static class MoveToNextFloor
+        private static void MoveToNextFloor(object floor)
         {
-            public static void Postfix(scrPlanet __instance, scrFloor floor)
+            try
             {
                 if (!Main.IsEnabled) return;
-                if (!__instance.controller.gameworld) return;
-                if (floor.nextfloor == null) return;
+                if (!Game.Gameworld) return;
+                object next = Game.NextFloor(floor);
+                if (IsNull(next)) return;
                 List<string> texts = new List<string>();
 
-                bool isTwirl = scrController.instance.isCW;
-                double val = scrMisc.GetAngleMoved(floor.entryangle, floor.exitangle, isTwirl) / 3.1415927410125732 *
-                             180; // 지금 앵글
-                double angle = Math.Round(val);
-
                 double speed = 0, kps = 0, curBPM = 0, nextbpm = 0;
-                speed = __instance.controller.speed ;
+                speed = Game.Speed;
                 curBPM = getRealBPM(floor, bpm) * playbackSpeed * pitch;
-                nextbpm = getRealBPM(floor.nextfloor==null? floor:floor.nextfloor, bpm)* playbackSpeed * pitch;
-                
+                nextbpm = getRealBPM(next, bpm) * playbackSpeed * pitch;
+
                 bool isDongta = false;
                 if (Main.setting.ignoreMultipress)
                 {
                     bool applyMultipressDamage = false;
                     bool flag2 = true;
-                    double angleMoved = scrMisc.GetAngleMoved(floor.entryangle, floor.exitangle, !floor.isCCW);
-                    double time = scrMisc.AngleToTime(angleMoved,
-                        (double) __instance.conductor.bpm * __instance.controller.speed);
+                    double angleMoved = Game.GetAngleMoved(Game.EntryAngle(floor), Game.ExitAngle(floor),
+                        !Game.IsCCW(floor));
+                    double time = Game.AngleToTime(angleMoved, (double) Game.ConductorBpm * speed);
                     double num2 = 1.56905098538846;
                     bool flag3 = flag2 & angleMoved > num2;
-                    double num3 = (double) __instance.controller.averageFrameTime * 2.5;
+                    double num3 = Game.AverageFrameTime * 2.5;
                     bool flag4 = flag3 & time > num3;
                     double num4 = 0.0299999993294477;
                     applyMultipressDamage = flag4 & time > num4;
 
                     isDongta = !applyMultipressDamage && !doubleEqual(nextbpm, curBPM);
                 }
-                
-                
-
-
-                //curBPM *= isTwirl? (2.0/scrController.instance.planetList.Count):(scrController.instance.planetList.Count*0.5);
 
                 if (Main.setting.onTileBpm)
                     texts.Add(Main.setting.text1.Replace("{value}", format((float) (bpm * speed))));
@@ -148,35 +157,35 @@ namespace ShowBPM
                     texts.Add(Main.setting.text3.Replace("{value}", Math.Round(kps).ToString()));
                 }
 
-
                 Main.gui.setText(string.Join("\n", texts));
 
                 beforedt = isDongta;
                 beforebpm = curBPM;
             }
+            catch (Exception e)
+            {
+                Report(e);
+            }
         }
 
-        [HarmonyPatch(typeof(RDString),"ChangeLanguage")]
-        internal static class ChangeLanguage
+        private static void ChangeLanguage(SystemLanguage language)
         {
-            public static void Prefix(SystemLanguage language)
+            try
             {
-                Main.language = Main.languages.ContainsKey(language.ToString()) ? Main.languages[language.ToString()] : Main.languages["English"];
-                Main.gui.text.font = RDString.GetFontDataForLanguage(language).font;
+                SetLanguage(language);
+                Main.gui.text.font = Game.GetFont(language);
+            }
+            catch (Exception e)
+            {
+                Report(e);
             }
         }
-        
-        [HarmonyPatch(typeof(scrController),"Awake")]
-        internal static class Awake
+
+        private static void SetLanguage(SystemLanguage language)
         {
-            public static void Prefix()
-            {
-                if (first)
-                {
-                    first = false;
-                    Main.gui.text.font = RDString.GetFontDataForLanguage(RDString.language).font;
-                }
-            }
+            Main.language = Main.languages.ContainsKey(language.ToString())
+                ? Main.languages[language.ToString()]
+                : Main.languages["English"];
         }
 
         public static bool doubleEqual(double f1, double f2)
@@ -184,26 +193,16 @@ namespace ShowBPM
             return Math.Abs(f1 - f2) < 0.0001;
         }
 
-        public static double getRealBPM(scrFloor floor, float bpm)
+        public static double getRealBPM(object floor, float bpm)
         {
-            /*
-            bool isTwirl = floor.isCCW;
-            double val = scrMisc.GetAngleMoved(floor.entryangle,floor.exitangle,!isTwirl)/3.1415927410125732*180; // 지금 앵글
-            double angle = Math.Round(val);
-
-            double speed = 0, kps = 0, curBPM = 0;
-            speed = floor.controller.speed;
-            if (angle == 0) angle = 360;
-            curBPM = (180/angle) * (speed * bpm);
-            return curBPM;*/
-            if (floor == null)
+            if (IsNull(floor))
                 return bpm;
-            if (floor.nextfloor == null)
-                return ADOBase.controller.speed * bpm;
-            return 60.0/(floor.nextfloor.entryTime - floor.entryTime);
-
+            object next = Game.NextFloor(floor);
+            if (IsNull(next))
+                return Game.Speed * bpm;
+            return 60.0 / (Game.EntryTime(next) - Game.EntryTime(floor));
         }
-        
+
         public static string Repeat(string value, int count)
         {
             return new StringBuilder(value.Length * count).Insert(0, value, count).ToString();
@@ -211,28 +210,25 @@ namespace ShowBPM
 
         public static string format(float v)
         {
-            return string.Format("{0:0." + Repeat(Main.setting.zero? "0":"#", Main.setting.showDecimal) + "}", v);
+            return string.Format("{0:0." + Repeat(Main.setting.zero ? "0" : "#", Main.setting.showDecimal) + "}", v);
         }
 
-        public static void LevelStart(scrController __instance)
+        public static void LevelStart()
         {
             Main.gui.TextObject.SetActive(true);
 
             List<string> texts = new List<string>();
             float kps = 0;
 
-            pitch = ADOBase.conductor.song.pitch;
-            //if (!GCS.currentSpeedRun.Equals(1)) pitch *= GCS.currentSpeedRun;
+            pitch = Game.SongPitch;
             playbackSpeed = 1;
-            bpm = ADOBase.conductor.bpm * pitch;
+            bpm = Game.ConductorBpm * pitch;
 
             float cur = bpm;
-            if (__instance.currentSeqID!=0)
+            if (Game.CurrentSeqID != 0)
             {
-                double speed = ADOBase.controller.speed;
-                cur = (float)(bpm * speed);
+                cur = (float) (bpm * Game.Speed);
             }
-
 
             if (Main.setting.onTileBpm)
                 texts.Add(Main.setting.text1.Replace("{value}", format(cur)));
@@ -247,6 +243,5 @@ namespace ShowBPM
             Main.gui.setText(string.Join("\n", texts));
             Main.gui.setSize(Main.setting.size);
         }
-
     }
 }
