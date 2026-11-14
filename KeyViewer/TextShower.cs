@@ -13,6 +13,26 @@ namespace ShowBPM
 	    public Text text;
 	    public Shadow shadowText;
 	    public RectTransform rectTransform;
+	    private bool shown;
+
+	    /// <summary>Requests the text on or off. It is only drawn while a level is actually being played.</summary>
+	    public void Show(bool value)
+	    {
+		    shown = value;
+		    Refresh();
+	    }
+
+	    void Update()
+	    {
+		    Refresh();
+	    }
+
+	    private void Refresh()
+	    {
+		    bool visible = shown && Game.InGame;
+		    if (TextObject.activeSelf != visible) TextObject.SetActive(visible);
+	    }
+
 	    public void setSize(int size)
 		{
 			text.fontSize = size;

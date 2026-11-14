@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityModManagerNet;
@@ -49,11 +49,11 @@ namespace ShowBPM
                 UnityEngine.Object.DontDestroyOnLoad(gui);
                 modEntry.OnGUI = OnGUI;
                 modEntry.OnSaveGUI = OnSaveGUI;
-                gui.TextObject.SetActive(false);
+                gui.Show(false);
                 
             } else
             {
-                gui.TextObject.SetActive(false);
+                gui.Show(false);
                 UnityEngine.Object.DestroyImmediate(gui);
                 gui = null;
                 Stop(modEntry);

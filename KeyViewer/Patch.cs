@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
@@ -46,9 +46,11 @@ namespace ShowBPM
 
                 foreach (MethodInfo target in targets)
                 {
+                    // Run before other mods' patches on the same method: a patch that throws
+                    // there would otherwise keep ours from running at all.
                     harmony.Patch(target,
-                        prefix == null ? null : new HarmonyMethod(typeof(Patch), prefix),
-                        postfix == null ? null : new HarmonyMethod(typeof(Patch), postfix));
+                        prefix == null ? null : new HarmonyMethod(typeof(Patch), prefix) {priority = Priority.First},
+                        postfix == null ? null : new HarmonyMethod(typeof(Patch), postfix) {priority = Priority.First});
                 }
             }
             catch (Exception e)
@@ -76,7 +78,7 @@ namespace ShowBPM
         private static void HideText()
         {
             if (!Main.IsEnabled) return;
-            Main.gui.TextObject.SetActive(false);
+            Main.gui.Show(false);
         }
 
         private static void ControllerAwake()
@@ -215,7 +217,7 @@ namespace ShowBPM
 
         public static void LevelStart()
         {
-            Main.gui.TextObject.SetActive(true);
+            Main.gui.Show(true);
 
             List<string> texts = new List<string>();
             float kps = 0;

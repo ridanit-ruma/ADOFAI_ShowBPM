@@ -24,6 +24,8 @@ namespace ShowBPM
         private static readonly Member conductor = new Member("ADOBase", "conductor");
         private static readonly Member gameworld = new Member("scrController", "gameworld");
         private static readonly Member speed = new Member("scrController", "speed");
+        private static readonly Member planetarySystem = new Member("scrController", "planetarySystem");
+        private static readonly Member systemSpeed = new Member("PlanetarySystem", "speed");
         private static readonly Member currentSeqID = new Member("scrController", "currentSeqID");
         private static readonly Member averageFrameTime = new Member("scrController", "averageFrameTime");
         private static readonly Member conductorBpm = new Member("scrConductor", "bpm");
@@ -43,8 +45,55 @@ namespace ShowBPM
         public static object Controller => controller.Get(null);
         public static object Conductor => conductor.Get(null);
 
+        private static readonly Member isLevelEditor = new Member("ADOBase", "isLevelEditor");
+        private static readonly Member editor = new Member("ADOBase", "editor");
+        private static readonly Member playMode = new Member("scnEditor", "playMode");
+        private static bool inGameFailed;
+
+        /// <summary>
+        /// True while a level is being played: not in menus or level select, and not
+        /// while editing in the level editor.
+        /// </summary>
+        public static bool InGame
+        {
+            get
+            {
+                if (inGameFailed) return true;
+                try
+                {
+                    object c = Controller;
+                    if (IsNull(c) || !Convert.ToBoolean(gameworld.Get(c))) return false;
+                    if (!Convert.ToBoolean(isLevelEditor.Get(null))) return true;
+                    object e = editor.Get(null);
+                    return !IsNull(e) && Convert.ToBoolean(playMode.Get(e));
+                }
+                catch (Exception e)
+                {
+                    // Unknown game version: fall back to the event-driven show/hide only.
+                    inGameFailed = true;
+                    Main.Logger.LogException(e);
+                    return true;
+                }
+            }
+        }
+
+        // Unity objects compare equal to null once destroyed, which a plain object comparison misses.
+        private static bool IsNull(object obj)
+        {
+            if (obj is UnityEngine.Object unityObject) return unityObject == null;
+            return obj == null;
+        }
+
         public static bool Gameworld => Convert.ToBoolean(gameworld.Get(Controller));
-        public static double Speed => Convert.ToDouble(speed.Get(Controller));
+        // Newer game versions moved the speed multiplier from scrController to its PlanetarySystem.
+        public static double Speed
+        {
+            get
+            {
+                object c = Controller;
+                return Convert.ToDouble(speed.Exists(c) ? speed.Get(c) : systemSpeed.Get(planetarySystem.Get(c)));
+            }
+        }
         public static int CurrentSeqID => Convert.ToInt32(currentSeqID.Get(Controller));
         public static double AverageFrameTime => Convert.ToDouble(averageFrameTime.Get(Controller));
 
@@ -114,6 +163,7 @@ namespace ShowBPM
             private readonly string name;
             private FieldInfo field;
             private PropertyInfo property;
+            private bool? exists;
 
             public Member(string typeName, string name)
             {
@@ -125,6 +175,25 @@ namespace ShowBPM
             {
                 if (field == null && property == null) Resolve(target);
                 return field != null ? field.GetValue(field.IsStatic ? null : target) : property.GetValue(target, null);
+            }
+
+            /// <summary>Whether this game version has the member. Checked once.</summary>
+            public bool Exists(object target)
+            {
+                if (exists == null)
+                {
+                    try
+                    {
+                        if (field == null && property == null) Resolve(target);
+                        exists = true;
+                    }
+                    catch (MissingMemberException)
+                    {
+                        exists = false;
+                    }
+                }
+
+                return exists.Value;
             }
 
             private void Resolve(object target)
